@@ -16,6 +16,26 @@ import performBatchedUpdates from '@yearn-finance/web-lib/utils/performBatchedUp
 import type {TNormalizedBN} from '@common/types/types';
 import type {TInitSolverArgs, TWithSolver} from '@vaults/types/solvers';
 
+function maxBy<T>(array: Array<T>, iteratee: (arg0: T) => any): T | undefined {
+	let result
+	if (array == null) {
+	  return result
+	}
+	let computed
+	for (const value of array) {
+	  const current = iteratee(value)
+  
+	  if (current != null && (computed === undefined
+		? (current === current)
+		: (current > computed)
+	  )) {
+		computed = current
+		result = value
+	  }
+	}
+	return result
+  }
+
 export enum	Solver {
 	VANILLA = 'Vanilla',
 	PARTNER_CONTRACT = 'PartnerContract',
@@ -84,99 +104,126 @@ function	WithSolverContextApp({children}: {children: React.ReactElement}): React
 			case Solver.WIDO:
 			case Solver.PORTALS:
 			case Solver.COWSWAP: {
-				const promises = [wido.init(request), cowswap.init(request), portals.init(request)];
-				const [widoQuote, cowswapQuote, portalsQuote] = await Promise.allSettled(promises);
-
-				/**************************************************************
-				** Logic is to use the primary solver (Wido) and check if a
-				** quote is available. If not, we fallback to the secondary
-				** solver (Cowswap). If neither are available, we set the
-				** quote to 0.
-				**************************************************************/
-				if (currentSolver === Solver.WIDO && !isSolverDisabled[Solver.WIDO]) {
-					if (widoQuote.status === 'fulfilled' && widoQuote?.value.raw?.gt(0)) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...wido, quote: widoQuote.value});
-							set_isLoading(false);
-						});
-					} else if (cowswapQuote.status === 'fulfilled' && cowswapQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.COWSWAP]) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...cowswap, quote: cowswapQuote.value});
-							set_isLoading(false);
-						});
-					} else if (portalsQuote.status === 'fulfilled' && portalsQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.PORTALS]) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...portals, quote: portalsQuote.value});
-							set_isLoading(false);
-						});
-					} else {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...cowswap, quote: toNormalizedBN(0)});
-							set_isLoading(false);
-						});
-					}
-					return;
-				}
-
-				/**************************************************************
-				** Logic is to use the primary solver (Cowswap) and check if a
-				** quote is available. If not, we fallback to the secondary
-				** solver (Wido). If neither are available, we set the
-				** quote to 0.
-				**************************************************************/
-				if (currentSolver === Solver.COWSWAP && !isSolverDisabled[Solver.COWSWAP]) {
-					if (cowswapQuote.status === 'fulfilled' && cowswapQuote.value.raw?.gt(0)) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...cowswap, quote: cowswapQuote.value});
-							set_isLoading(false);
-						});
-					} else if (widoQuote.status === 'fulfilled' && widoQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.WIDO]) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...wido, quote: widoQuote.value});
-							set_isLoading(false);
-						});
-					} else if (portalsQuote.status === 'fulfilled' && portalsQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.PORTALS]) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...portals, quote: portalsQuote.value});
-							set_isLoading(false);
-						});
-					} else {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...wido, quote: toNormalizedBN(0)});
-							set_isLoading(false);
-						});
+				const prefer: string = 'speed';
+				// OPTIMIZE FOR OUTPUT
+				if (prefer === 'output') {
+					const promises = [['wido', wido.init(request)], ['cowswap', cowswap.init(request)], ['portals', portals.init(request)]].map(request => Promise.all(request) as Promise<[string, TNormalizedBN]>);
+					const quotes = (await Promise.allSettled(promises)).filter((result): result is PromiseFulfilledResult<[string, TNormalizedBN]> => result.status === 'fulfilled');
+					const bestQuote = maxBy(quotes, (promise) => promise.value[1].normalized)?.value!;
+					
+					if (bestQuote[0] === 'wido') {
+						set_currentSolverState({...wido, quote: bestQuote[1]});
+					} else if (bestQuote[0] === 'cowswap') {
+						set_currentSolverState({...cowswap, quote: bestQuote[1]});
+					} else if (bestQuote[0] === 'portals') {
+						set_currentSolverState({...portals, quote: bestQuote[1]});
 					}
 				}
 
-				/**************************************************************
-				** Logic is to use the primary solver (Portals) and check if a
-				** quote is available. If not, we fallback to the secondary
-				** solver (Wido). If neither are available, we set the
-				** quote to 0.
-				**************************************************************/
-				if (currentSolver === Solver.PORTALS && !isSolverDisabled[Solver.PORTALS]) {
-					if (portalsQuote.status === 'fulfilled' && portalsQuote.value.raw?.gt(0)) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...portals, quote: portalsQuote.value});
-							set_isLoading(false);
-						});
-					} else if (widoQuote.status === 'fulfilled' && widoQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.WIDO]) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...wido, quote: widoQuote.value});
-							set_isLoading(false);
-						});
-					} else if (cowswapQuote.status === 'fulfilled' && cowswapQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.COWSWAP]) {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...cowswap, quote: cowswapQuote.value});
-							set_isLoading(false);
-						});
-					} else {
-						performBatchedUpdates((): void => {
-							set_currentSolverState({...wido, quote: toNormalizedBN(0)});
-							set_isLoading(false);
-						});
+				// OPTIMIZE FOR SPEED
+				if (prefer === 'speed') {
+					const promises = [['wido', wido.init(request)], ['cowswap', cowswap.init(request)], ['portals', portals.init(request)]].map(request => Promise.all(request) as Promise<[string, TNormalizedBN]>);
+					const firstQuote = await Promise.any(promises);
+
+					if (firstQuote[0] === 'wido') {
+						set_currentSolverState({...wido, quote: firstQuote[1]});
+					} else if (firstQuote[0] === 'cowswap') {
+						set_currentSolverState({...cowswap, quote: firstQuote[1]});
+					} else if (firstQuote[0] === 'portals') {
+						set_currentSolverState({...portals, quote: firstQuote[1]});
 					}
 				}
+
+				// /**************************************************************
+				// ** Logic is to use the primary solver (Wido) and check if a
+				// ** quote is available. If not, we fallback to the secondary
+				// ** solver (Cowswap). If neither are available, we set the
+				// ** quote to 0.
+				// **************************************************************/
+				// if (currentSolver === Solver.WIDO && !isSolverDisabled[Solver.WIDO]) {
+				// 	if (widoQuote.status === 'fulfilled' && widoQuote?.value.raw?.gt(0)) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...wido, quote: widoQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else if (cowswapQuote.status === 'fulfilled' && cowswapQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.COWSWAP]) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...cowswap, quote: cowswapQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else if (portalsQuote.status === 'fulfilled' && portalsQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.PORTALS]) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...portals, quote: portalsQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...cowswap, quote: toNormalizedBN(0)});
+				// 			set_isLoading(false);
+				// 		});
+				// 	}
+				// 	return;
+				// }
+
+				// /**************************************************************
+				// ** Logic is to use the primary solver (Cowswap) and check if a
+				// ** quote is available. If not, we fallback to the secondary
+				// ** solver (Wido). If neither are available, we set the
+				// ** quote to 0.
+				// **************************************************************/
+				// if (currentSolver === Solver.COWSWAP && !isSolverDisabled[Solver.COWSWAP]) {
+				// 	if (cowswapQuote.status === 'fulfilled' && cowswapQuote.value.raw?.gt(0)) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...cowswap, quote: cowswapQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else if (widoQuote.status === 'fulfilled' && widoQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.WIDO]) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...wido, quote: widoQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else if (portalsQuote.status === 'fulfilled' && portalsQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.PORTALS]) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...portals, quote: portalsQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...wido, quote: toNormalizedBN(0)});
+				// 			set_isLoading(false);
+				// 		});
+				// 	}
+				// }
+
+				// /**************************************************************
+				// ** Logic is to use the primary solver (Portals) and check if a
+				// ** quote is available. If not, we fallback to the secondary
+				// ** solver (Wido). If neither are available, we set the
+				// ** quote to 0.
+				// **************************************************************/
+				// if (currentSolver === Solver.PORTALS && !isSolverDisabled[Solver.PORTALS]) {
+				// 	if (portalsQuote.status === 'fulfilled' && portalsQuote.value.raw?.gt(0)) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...portals, quote: portalsQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else if (widoQuote.status === 'fulfilled' && widoQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.WIDO]) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...wido, quote: widoQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else if (cowswapQuote.status === 'fulfilled' && cowswapQuote.value.raw?.gt(0) && !isSolverDisabled[Solver.COWSWAP]) {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...cowswap, quote: cowswapQuote.value});
+				// 			set_isLoading(false);
+				// 		});
+				// 	} else {
+				// 		performBatchedUpdates((): void => {
+				// 			set_currentSolverState({...wido, quote: toNormalizedBN(0)});
+				// 			set_isLoading(false);
+				// 		});
+				// 	}
+				// }
 
 				set_isLoading(false);
 
